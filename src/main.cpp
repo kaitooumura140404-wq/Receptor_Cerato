@@ -96,7 +96,6 @@ void avrc_play_pos_callback(uint32_t play_pos) {
 
 // --- FUNÇÃO 5: Mudança ou Reinício de Faixa (O Alarme!) ---
 void avrc_track_change_callback(uint8_t *id) {
-  // O celular bateu nesse alarme? Significa que a faixa reiniciou ou trocou!
   tempo_atual_ms = 0;
   ultimo_tick_tempo = millis(); 
   atualizar_tela_tempo = true;
@@ -128,8 +127,6 @@ void setup() {
   a2dp_sink.set_on_audio_state_changed(audio_state_changed); 
   a2dp_sink.set_on_connection_state_changed(connection_state_changed); 
   a2dp_sink.set_avrc_rn_play_pos_callback(avrc_play_pos_callback); 
-  
-  // Registra a nova função de detecção de faixa!
   a2dp_sink.set_avrc_rn_track_change_callback(avrc_track_change_callback); 
   
   a2dp_sink.start("Cerato_Bluetooth"); 
@@ -161,13 +158,12 @@ void loop() {
     }
   }
 
-  // --- DESENHO DO CRONÔMETRO (AGORA COM FONTE MAIOR) ---
+  // Desenho do Cronômetro
   if (atualizar_tela_tempo) {
     atualizar_tela_tempo = false;
-    tft.fillRect(0, 215, tft.width(), 40, TFT_BLACK); // Borracha maior
+    tft.fillRect(0, 215, tft.width(), 40, TFT_BLACK); 
     tft.setTextDatum(MC_DATUM);
     
-    // Usa a fonte GFX Premium para o relógio também!
     tft.setFreeFont(&FreeSans12pt7b); 
     tft.setTextColor(TFT_WHITE, TFT_BLACK);
     
@@ -175,10 +171,8 @@ void loop() {
     if (duracao_total_ms > 0) {
       texto_tempo += " / " + formatarTempo(duracao_total_ms);
     }
-    // Desce um pouco a posição Y (240) para acomodar o tamanho da fonte
     tft.drawString(texto_tempo, tft.width() / 2, 240); 
-    
-    tft.setTextFont(4); // Volta para a fonte padrão para não bagunçar o resto!
+    tft.setTextFont(4); 
   }
 
   // Desenho da Conexão
@@ -218,7 +212,9 @@ void loop() {
   if (atualizar_tela_metadados) {
     atualizar_tela_metadados = false; 
     tft.setTextDatum(MC_DATUM);
-    tft.setTextPadding(tft.width());
+    
+    // 1. Limpa TUDO na área do título e do artista incondicionalmente!
+    tft.fillRect(0, 80, tft.width(), 120, TFT_BLACK); 
     
     tft.setFreeFont(&FreeSansBold18pt7b); 
     largura_musica = tft.textWidth(musica_atual); 
@@ -226,11 +222,11 @@ void loop() {
     if (largura_musica > 460) {
       precisa_scroll = true;
       posicao_scroll = 40; 
-      tft.fillRect(0, 80, tft.width(), 70, TFT_BLACK); 
     } else {
       precisa_scroll = false;
       tft.setTextColor(TFT_WHITE, TFT_BLACK);
-      tft.drawString(musica_atual, tft.width() / 2, 130);
+      // Desenhado exatamente na mesma linha do eixo do carrossel (120)
+      tft.drawString(musica_atual, tft.width() / 2, 120);
     }
 
     tft.setFreeFont(&FreeSans12pt7b); 
@@ -269,6 +265,7 @@ void loop() {
       spriteMusica.drawString(musica_atual, posicao_scroll, 40);
       spriteMusica.drawString(musica_atual, posicao_scroll + largura_musica + espaco_vazio, 40);
       
+      // O Sprite começa no 80 e o texto dentro dele no 40. Eixo real na tela = 120!
       spriteMusica.pushSprite(10, 80);
       
       posicao_scroll -= 2;
