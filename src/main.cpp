@@ -6,23 +6,28 @@ BluetoothA2DPSink a2dp_sink;
 TFT_eSPI tft = TFT_eSPI(); 
 TFT_eSprite spriteMusica = TFT_eSprite(&tft); 
 
-// --- CONTROLE REDUNDANTE DO MUTE (SOFTWARE) ---
+// --- CONTROLE DO MUTE REDUNDANTE ---
 #define PINO_MUTE 32
 bool esperando_desmutar = false;
 unsigned long tempo_play_pressionado = 0;
-const int ATRASO_DESMUTE_MS = 500; // Meio segundo de silêncio para a "bagunça" do I2S passar
+const int ATRASO_DESMUTE_MS = 500; 
 
+// --- BANDEIRAS VISUAIS ---
 volatile bool atualizar_tela_conexao = false;
 volatile bool atualizar_tela_metadados = false;
 volatile bool atualizar_tela_status = false;
 volatile bool atualizar_tela_tempo = false;
+volatile bool atualizar_tela_volume = true; 
 
+// --- MEMÓRIA DO SISTEMA ---
 bool bluetooth_conectado = false;
 bool musica_tocando = false;
 String nome_celular = "Nao conectado";
 String musica_atual = "";
 String artista_atual = "";
+int volume_celular = 60; 
 
+// --- VARIÁVEIS DE ANIMAÇÃO ---
 int largura_musica = 0;
 int posicao_scroll = 460;
 unsigned long ultimo_scroll = 0;
@@ -39,6 +44,11 @@ String formatarTempo(uint32_t ms) {
   char buf[6];
   sprintf(buf, "%02d:%02d", minutos, segundos);
   return String(buf);
+}
+
+void volume_change_callback(int volume) {
+  volume_celular = volume;
+  atualizar_tela_volume = true;
 }
 
 void avrc_metadata_callback(uint8_t id, const uint8_t *text) {
@@ -59,21 +69,16 @@ void avrc_metadata_callback(uint8_t id, const uint8_t *text) {
   }
 }
 
-// A MÁGICA ACONTECE AQUI!
 void audio_state_changed(esp_a2d_audio_state_t state, void *ptr) {
   if (state == ESP_A2D_AUDIO_STATE_STARTED) {
     musica_tocando = true;
     atualizar_tela_status = true;
-    
-    // Inicia o timer de 500ms antes de liberar o hardware
     esperando_desmutar = true;
     tempo_play_pressionado = millis(); 
   } 
   else if (state == ESP_A2D_AUDIO_STATE_REMOTE_SUSPEND || state == ESP_A2D_AUDIO_STATE_STOPPED) {
     musica_tocando = false;
     atualizar_tela_status = true;
-    
-    // Muta IMEDIATAMENTE antes da Bomba de Carga do DAC cair!
     digitalWrite(PINO_MUTE, LOW); 
     esperando_desmutar = false;
   }
@@ -84,7 +89,7 @@ void connection_state_changed(esp_a2d_connection_state_t state, void *ptr) {
     bluetooth_conectado = true;
   } else {
     bluetooth_conectado = false;
-    digitalWrite(PINO_MUTE, LOW); // Fica mudo se desconectar
+    digitalWrite(PINO_MUTE, LOW); 
   }
   atualizar_tela_conexao = true;
 }
@@ -101,17 +106,31 @@ void avrc_track_change_callback(uint8_t *id) {
   atualizar_tela_tempo = true;
 }
 
+void desenhar_logo_bluetooth(int bx, int by, uint16_t cor) {
+  // 1. O Fundo Clássico: Uma elipse preenchida (raio X = 15, raio Y = 19)
+  // Isso cria aquela proporção ovalada elegante atrás do símbolo
+  tft.fillEllipse(bx, by, 15, 19, TFT_BLUE);              
+  
+  // 2. A Runa "B": Agora em branco sobre o fundo azul
+  tft.drawLine(bx, by - 12, bx, by + 12, TFT_WHITE);              
+  tft.drawLine(bx, by - 12, bx + 10, by - 6, TFT_WHITE);          
+  tft.drawLine(bx + 10, by - 6, bx - 10, by + 6, TFT_WHITE);      
+  tft.drawLine(bx - 10, by - 6, bx + 10, by + 6, TFT_WHITE);      
+  tft.drawLine(bx + 10, by + 6, bx, by + 12, TFT_WHITE);          
+}
+
 void setup() {
   Serial.begin(115200);
 
-  // Configura o pino de Mute e já inicia ele em LOW (Mudo)
   pinMode(PINO_MUTE, OUTPUT);
   digitalWrite(PINO_MUTE, LOW);
   
   tft.init();
   tft.setRotation(1); 
   tft.fillScreen(TFT_BLACK); 
-  spriteMusica.createSprite(460, 60);
+  
+  // 1. SPRITE MAIOR PARA PROTEGER OS DESCENDENTES
+  spriteMusica.createSprite(450, 70);
 
   tft.drawLine(0, 70, tft.width(), 70, TFT_DARKGREY); 
   tft.setTextDatum(MC_DATUM);
@@ -126,28 +145,25 @@ void setup() {
       .data_in_num = I2S_PIN_NO_CHANGE
   };
   
-  
   a2dp_sink.set_pin_config(my_pin_config);
   a2dp_sink.set_avrc_metadata_callback(avrc_metadata_callback);
   a2dp_sink.set_on_audio_state_changed(audio_state_changed); 
   a2dp_sink.set_on_connection_state_changed(connection_state_changed); 
   a2dp_sink.set_avrc_rn_play_pos_callback(avrc_play_pos_callback); 
   a2dp_sink.set_avrc_rn_track_change_callback(avrc_track_change_callback); 
+  a2dp_sink.set_on_volumechange(volume_change_callback);
   
   a2dp_sink.start("Cerato_Bluetooth"); 
 }
 
 void loop() {
-  // --- VERIFICADOR DO TIMER DO MUTE REDUNDANTE ---
   if (esperando_desmutar) {
-    // Se o tempo passou, levanta o pino 32. O Filtro RC fará a rampa suave!
     if (millis() - tempo_play_pressionado >= ATRASO_DESMUTE_MS) {
       digitalWrite(PINO_MUTE, HIGH);
       esperando_desmutar = false;
     }
   }
 
-  // Relógio Lógico
   if (musica_tocando) {
     if (millis() - ultimo_tick_tempo >= 1000) {
       ultimo_tick_tempo = millis();
@@ -159,10 +175,26 @@ void loop() {
     }
   }
 
-  // Desenho do Cronômetro
+  // --- DESENHO DA BARRA DE VOLUME ---
+  if (atualizar_tela_volume) {
+    atualizar_tela_volume = false;
+    int x_barra = 455; 
+    int y_barra = 150; 
+    int largura_barra = 12;
+    int altura_total = 150; 
+    
+    tft.drawRect(x_barra, y_barra, largura_barra, altura_total, TFT_DARKGREY);
+    tft.fillRect(x_barra + 2, y_barra + 2, largura_barra - 4, altura_total - 4, TFT_BLACK);
+    int altura_preenchida = map(volume_celular, 0, 127, 0, altura_total - 4);
+    if (altura_preenchida > 0) {
+      int y_inicio_preenchimento = (y_barra + altura_total - 2) - altura_preenchida;
+      tft.fillRect(x_barra + 2, y_inicio_preenchimento, largura_barra - 4, altura_preenchida, TFT_WHITE);
+    }
+  }
+
   if (atualizar_tela_tempo) {
     atualizar_tela_tempo = false;
-    tft.fillRect(0, 215, tft.width(), 40, TFT_BLACK); 
+    tft.fillRect(0, 215, 450, 40, TFT_BLACK); 
     tft.setTextDatum(MC_DATUM);
     tft.setFreeFont(&FreeSans12pt7b); 
     tft.setTextColor(TFT_WHITE, TFT_BLACK);
@@ -175,7 +207,8 @@ void loop() {
     tft.setTextFont(4); 
   }
 
-  // Desenho da Conexão
+ // ... (Cronômetro e Barra de volume ficam intocados lá em cima)
+
   if (atualizar_tela_conexao) {
     atualizar_tela_conexao = false; 
     tft.fillRect(0, 0, tft.width(), 65, TFT_BLACK); 
@@ -184,7 +217,14 @@ void loop() {
     
     if (bluetooth_conectado) {
       tft.setTextColor(TFT_GREEN, TFT_BLACK);
-      tft.drawString("Dispositivo Conectado", tft.width() / 2, 35);
+      // CORREÇÃO: Se já tivermos o nome real do S25 gravado, mostramos ele. 
+      // Se a memória estiver vazia, mostramos a frase genérica provisória.
+      if (nome_celular == "" || nome_celular == "Nao conectado") {
+        tft.drawString("Dispositivo Conectado", tft.width() / 2, 35);
+      } else {
+        tft.drawString(nome_celular, tft.width() / 2, 35);
+      }
+      desenhar_logo_bluetooth(450, 32, TFT_CYAN); 
     } else {
       tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
       tft.drawString("Nao conectado", tft.width() / 2, 35);
@@ -192,15 +232,22 @@ void loop() {
       precisa_scroll = false;
       duracao_total_ms = 0;
       tempo_atual_ms = 0;
+      
+      // O RESET FUNDAMENTAL: Limpa a memória para o próximo celular que conectar!
+      nome_celular = "Nao conectado"; 
+      musica_atual = "";
+      artista_atual = "";
+      
+      atualizar_tela_volume = true; 
     }
   }
 
-  // Busca do Nome do Celular
   if (bluetooth_conectado) {
     String nome_real = a2dp_sink.get_peer_name();
-    if (nome_real != "" && nome_real != nome_celular) {
+    // Impede que "picos" vazios ou nomes genéricos da biblioteca sobrescrevam o nome correto
+    if (nome_real != "" && nome_real != "<unknown>" && nome_real != nome_celular) {
         nome_celular = nome_real;
-        tft.fillRect(0, 0, tft.width(), 65, TFT_BLACK);
+        tft.fillRect(0, 0, 430, 65, TFT_BLACK); 
         tft.setTextDatum(MC_DATUM);
         tft.setTextFont(4);
         tft.setTextColor(TFT_GREEN, TFT_BLACK);
@@ -208,22 +255,31 @@ void loop() {
     }
   }
 
-  // Metadados
+  // ... (Daqui para baixo segue a parte dos Metadados, inalterada)
+
   if (atualizar_tela_metadados) {
     atualizar_tela_metadados = false; 
     tft.setTextDatum(MC_DATUM);
-    tft.fillRect(0, 80, tft.width(), 120, TFT_BLACK); 
+
+    // 2. A "SUPER BORRACHA" EXPANDIDA
+    // Inicia no Y=71 (para não apagar a sua linha cinza do Y=70)
+    // E vai até o Y=149 (Altura 79). 
+    // Isso cobre tanto o letreiro rolante (que subiu) quanto as pernas do estático (que desceram).
+    tft.fillRect(0, 71, tft.width(), 79, TFT_BLACK); 
+    
+    tft.fillRect(0, 150, 450, 60, TFT_BLACK); 
     
     tft.setFreeFont(&FreeSansBold18pt7b); 
     largura_musica = tft.textWidth(musica_atual); 
     
-    if (largura_musica > 460) {
+    if (largura_musica > 450) { 
       precisa_scroll = true;
       posicao_scroll = 40; 
     } else {
       precisa_scroll = false;
       tft.setTextColor(TFT_WHITE, TFT_BLACK);
-      tft.drawString(musica_atual, tft.width() / 2, 120);
+      // Mantém a posição original do texto estático que você gosta
+      tft.drawString(musica_atual, tft.width() / 2, 125);
     }
 
     tft.setFreeFont(&FreeSans12pt7b); 
@@ -233,7 +289,6 @@ void loop() {
     tft.setTextFont(4); 
   }
 
-  // Símbolos de Play/Pause
   if (atualizar_tela_status) {
     atualizar_tela_status = false; 
     int cx = tft.width() / 2;
@@ -248,7 +303,6 @@ void loop() {
     }
   }
 
-  // Motor do Letreiro
   if (precisa_scroll && musica_tocando) { 
     if (millis() - ultimo_scroll > 20) { 
       ultimo_scroll = millis();
@@ -259,10 +313,14 @@ void loop() {
       spriteMusica.setTextDatum(ML_DATUM); 
       
       int espaco_vazio = 100; 
-      spriteMusica.drawString(musica_atual, posicao_scroll, 40);
-      spriteMusica.drawString(musica_atual, posicao_scroll + largura_musica + espaco_vazio, 40);
+      // 3. TEXTO NO MEIO EXATO DO NOVO SPRITE
+      // Com altura 70, o Y=35 é o centro. Pernas e topos ficam intactos.
+      spriteMusica.drawString(musica_atual, posicao_scroll, 35);
+      spriteMusica.drawString(musica_atual, posicao_scroll + largura_musica + espaco_vazio, 35);
       
-      spriteMusica.pushSprite(10, 80);
+      // 4. POSIÇÃO MAIS ALTA DO LETREIRO
+      // Desenhado no Y=75 para acomodar o espaço das pernas da fonte sem tocar na Barra de Volume.
+      spriteMusica.pushSprite(10, 75);
       
       posicao_scroll -= 2;
       if (posicao_scroll <= -(largura_musica + espaco_vazio)) {
